@@ -6,7 +6,6 @@
 const CACHE_NAME = 'lovebot-v2.0';
 
 const ASSETS = [
-  './',
   './index.html',
   './style.css',
   './app.js',
