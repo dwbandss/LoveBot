@@ -2,7 +2,7 @@
   "name": "LoveBot",
   "short_name": "LoveBot",
   "description": "Your personal emotional companion",
-  "start_url": "./",
+  "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0d0618",
