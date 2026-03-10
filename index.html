@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#0d0618"/>
+  <meta name="description" content="LoveBot – your personal emotional companion"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="LoveBot"/>
+  <title>LoveBot 💌</title>
+  <link rel="manifest" href="pwa/manifest.json"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<!-- ══════════════════════════════════
+     SPLASH SCREEN
+══════════════════════════════════ -->
+<div id="splash" class="screen active">
+  <div class="stars"></div>
+  <div class="splash-content">
+    <div class="heart-wrap">
+      <svg viewBox="0 0 100 90" fill="none">
+        <defs>
+          <linearGradient id="hg" x1="0" y1="0" x2="100" y2="90" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ff9eb5"/>
+            <stop offset="100%" stop-color="#c084fc"/>
+          </linearGradient>
+        </defs>
+        <path d="M50 85 C50 85 5 55 5 28 C5 14 16 5 28 5 C37 5 45 10 50 18 C55 10 63 5 72 5 C84 5 95 14 95 28 C95 55 50 85 50 85Z" fill="url(#hg)" opacity=".9"/>
+      </svg>
+      <div class="pulse"></div>
+      <div class="pulse d1"></div>
+    </div>
+    <h1 class="splash-title" id="splash-title">LoveBot</h1>
+    <p class="splash-sub">Your personal emotional companion</p>
+    <button class="btn-start" id="btn-start">Begin the journey ✦</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     MOOD SCREEN
+══════════════════════════════════ -->
+<div id="mood" class="screen">
+  <p class="mood-prompt">How are you feeling right now?</p>
+  <div class="mood-grid">
+    <button class="mood-btn" data-mood="happy">
+      <span class="mood-emoji">🌸</span><span class="mood-label">Happy</span>
+    </button>
+    <button class="mood-btn" data-mood="neutral">
+      <span class="mood-emoji">🌙</span><span class="mood-label">Okay</span>
+    </button>
+    <button class="mood-btn" data-mood="sad">
+      <span class="mood-emoji">🌧</span><span class="mood-label">Sad</span>
+    </button>
+    <button class="mood-btn" data-mood="stressed">
+      <span class="mood-emoji">🌀</span><span class="mood-label">Stressed</span>
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     MAIN CONSTELLATION SCREEN
+══════════════════════════════════ -->
+<div id="main" class="screen">
+
+  <!-- Nebula background blobs -->
+  <div class="nebula-bg">
+    <div class="nebula n1"></div>
+    <div class="nebula n2"></div>
+    <div class="nebula n3"></div>
+  </div>
+
+  <!-- Top bar -->
+  <header class="top-bar">
+    <div class="bot-id">
+      <div class="avatar">
+        <div class="av-core"></div>
+        <div class="av-ring"></div>
+      </div>
+      <div>
+        <div class="bot-name" id="bot-name">LoveBot</div>
+        <div class="bot-status" id="bot-status">Here for you ✦</div>
+      </div>
+    </div>
+    <div class="top-acts">
+      <button class="icon-btn" id="btn-mood-change" title="Change mood">
+        <span id="mood-icon">🌸</span>
+      </button>
+      <button class="icon-btn" id="btn-memories" title="Memories">💭</button>
+      <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- Constellation canvas (lines between nodes) -->
+  <canvas id="cvs"></canvas>
+
+  <!-- Floating message nodes -->
+  <div class="node-field" id="nodes"></div>
+
+  <!-- Centre orb -->
+  <div class="orb-wrap">
+    <button class="orb" id="orb" aria-label="Tap for a surprise">
+      <div class="orb-inner"><div class="orb-glyph">✦</div></div>
+      <div class="halo h1"></div>
+      <div class="halo h2"></div>
+      <div class="halo h3"></div>
+    </button>
+    <p class="orb-hint">tap the star</p>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="stats-bar">
+    <div class="stat" id="stat-count">✦ 0 moments</div>
+    <div class="stat" id="stat-unlock">🔓 next unlock: 5</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════
+     MESSAGE CARD OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="msg-overlay">
+  <div class="msg-card">
+    <div class="card-orn top"></div>
+    <div class="typing" id="typing">
+      <div class="mini-av"></div>
+      <span class="typing-txt">LoveBot is thinking</span>
+      <div class="dots"><span></span><span></span><span></span></div>
+    </div>
+    <div class="msg-body hidden" id="msg-body">
+      <span class="msg-sticker hidden" id="msg-sticker"></span>
+      <div class="msg-cat" id="msg-cat"></div>
+      <p class="msg-txt" id="msg-txt"></p>
+      <div class="msg-acts">
+        <button class="mbtn voice" id="btn-voice">🔊 Listen</button>
+        <button class="mbtn" id="btn-save">💾 Save</button>
+      </div>
+    </div>
+    <button class="card-x" id="msg-close">✕</button>
+    <div class="card-orn bot"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     MEMORY OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="mem-overlay">
+  <div class="panel">
+    <h2 class="panel-title">💭 Memories</h2>
+    <div id="mem-grid" class="mem-grid"></div>
+    <div class="mem-empty hidden" id="mem-empty">
+      <p>No saved memories yet.<br>Save messages to keep them here.</p>
+    </div>
+    <button class="panel-close" id="mem-close">Close</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     SETTINGS OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="set-overlay">
+  <div class="panel">
+    <h2 class="panel-title">⚙ Settings</h2>
+    <div class="set-row">
+      <span>TTS voice messages</span>
+      <label class="toggle">
+        <input type="checkbox" id="tog-voice" checked>
+        <span class="toggle-sl"></span>
+      </label>
+    </div>
+    <div class="set-row">
+      <!-- Night mode = light theme toggle -->
+      <span>Light mode ☀️</span>
+      <label class="toggle">
+        <input type="checkbox" id="tog-night">
+        <span class="toggle-sl"></span>
+      </label>
+    </div>
+    <div class="set-row" style="border:none;padding-top:.8rem">
+      <button class="mbtn" id="btn-open-vm" style="width:100%;text-align:center">
+        🎙 My Voice Clips <span id="vm-badge" style="color:var(--violet)"></span>
+      </button>
+    </div>
+    <div class="set-row reset-row">
+      <button class="danger" id="btn-reset">Reset all data</button>
+    </div>
+    <button class="panel-close" id="set-close">Done</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     VOICE MANAGER OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="vm-overlay">
+  <div class="panel">
+    <h2 class="panel-title">🎙 My Voice Clips</h2>
+
+    <!-- Drop zone -->
+    <div class="vm-drop" id="vm-drop">
+      <input type="file" id="vm-file" accept="audio/*" multiple>
+      <div class="vm-drop-icon">🎵</div>
+      <div class="vm-drop-txt">Drop audio files here or tap to browse</div>
+      <div class="vm-drop-sub">.mp3 · .wav · .ogg · .m4a (max 5 MB each)</div>
+    </div>
+
+    <div class="vm-count" id="vm-count"></div>
+    <div class="vm-list hidden" id="vm-list"></div>
+    <div class="vm-empty" id="vm-empty">
+      No clips yet. Add your .mp3 or .wav files above and<br>
+      LoveBot will play them as surprise voice messages.
+    </div>
+
+    <!-- Playback chance slider -->
+    <div class="vm-chance-row">
+      <span>Play chance per tap</span>
+      <input type="range" id="vm-chance" min="0" max="100" step="5" value="30">
+      <span class="vm-chance-val" id="vm-chance-val">30%</span>
+    </div>
+
+    <button class="panel-close" id="vm-close">Done</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     UNLOCK OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="ul-overlay">
+  <div class="unlock-card">
+    <div id="confetti-box"></div>
+    <span class="ul-glyph" id="ul-glyph">🔓</span>
+    <h2 class="ul-title" id="ul-title">Secret Unlocked!</h2>
+    <p class="ul-msg" id="ul-msg"></p>
+    <button class="mbtn" id="ul-close">Wonderful ✦</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     GRATITUDE PROMPT OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="gratitude-overlay">
+  <div class="gratitude-card">
+    <span class="gratitude-emoji">🌸</span>
+    <p class="gratitude-q" id="gratitude-q">What made you smile today?</p>
+    <textarea class="gratitude-input" id="gratitude-input" placeholder="Tell me something…" rows="3"></textarea>
+    <div class="gratitude-acts">
+      <button class="mbtn" id="gratitude-save">Save ✦</button>
+    </div>
+    <button class="gratitude-skip" id="gratitude-skip">Maybe later</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     SCRIPTS  (order matters)
+══════════════════════════════════ -->
+<script src="data/messages.js"></script>
+<script src="modules/moodEngine.js"></script>
+<script src="modules/voiceEngine.js"></script>
+<script src="modules/emotionEngine.js"></script>
+<script src="modules/voiceManager.js"></script>
+<script src="modules/unlockEngine.js"></script>
+<script src="modules/constellationEngine.js"></script>
+<script src="modules/surpriseEngine.js"></script>
+<script src="modules/adminEngine.js"></script>
+<script src="modules/memoryAI.js"></script>
+<script src="modules/dailyEngine.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
