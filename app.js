@@ -157,23 +157,14 @@
     const memMsg = MemoryAI.getCallbackMessage();
     if (memMsg) { showMessage(memMsg); _checkMilestone(result); return; }
 
-    // 2. Admin private text message (40% if any)
+    // 2. Admin private text message (40% if any exist)
     const adminMsg = AdminEngine.getRandomAdminMsg();
     if (adminMsg && Math.random() < 0.4) {
       showMessage({ t: adminMsg.t, c: adminMsg.c });
       _checkMilestone(result); return;
     }
 
-    // 3. Admin voice clip — "I saved something for you" moment (voice_memories unlocked: higher chance)
-    const adminClip = AdminEngine.getRandomAdminClip();
-    const clipChance = UnlockEngine.hasFeature('voice_memories') ? 0.40 : 0.20;
-    if (adminClip && Math.random() < clipChance) {
-      try { new Audio(adminClip.data).play(); } catch {}
-      showMessage({ t: '🎙 I saved something for you ✦', c: 'voice memory', _isClip: true });
-      _checkMilestone(result); return;
-    }
-
-    // 4. Default mood message
+    // 3. Default mood message
     showMessage(MoodEngine.getMessage());
     _checkMilestone(result);
   }
@@ -391,9 +382,6 @@
     MemoryAI.init();
     NotificationEngine.init();
 
-    // Admin: tap "LoveBot" text on splash OR top bar 5×
-    AdminEngine.init($('splash-title'), $('bot-name'));
-
     // Voice manager (admin uploads only — user doesn't see this button)
     VoiceManager.init({
       dropEl:      vmDrop,
@@ -416,6 +404,12 @@
   function boot() {
     _applySettings(_loadSettings());
     showScreen(splashScreen);
+
+    // Admin trigger registered immediately at boot so it works on
+    // BOTH the splash screen (splash-title) AND main screen (bot-name)
+    // regardless of which screen the user is currently on.
+    AdminEngine.init($('splash-title'), $('bot-name'));
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./pwa/service-worker.js').catch(() => {});
     }

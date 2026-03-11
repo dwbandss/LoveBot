@@ -1,121 +1,89 @@
 /**
- * modules/constellationEngine.js  v3.0
+ * modules/dailyEngine.js
+ * ─────────────────────────────────────────────────────
+ * Two automatic delivery systems:
  *
- * Changes from v2:
- *  - Supports lb:goldNodes event → redraws lines in gold
- *  - Supports lb:expandConstellation → adds 6 more nodes (150-tap unlock)
- *  - applyCurrentUnlocks() called on build so state is restored on reload
+ * 1. DAILY GREETING — fires once per calendar day when the user
+ *    opens the app (after the main screen loads).
+ *
+ * 2. THINKING OF YOU — fires every 20 minutes with a 15% chance,
+ *    using admin "moments" if available, otherwise a mood message.
+ *    Only fires when the tab is visible.
+ *
+ * Public API
+ *   DailyEngine.init()   — call once from _initMain()
+ *   DailyEngine.stop()   — cancel intervals (cleanup)
  */
-const ConstellationEngine = (() => {
-  const BASE_POSITIONS = [
-    {x:14,y:18,t:''},     {x:73,y:13,t:'rose'}, {x:87,y:40,t:''},
-    {x:80,y:70,t:'gold'}, {x:54,y:82,t:'rose'}, {x:22,y:76,t:''},
-    {x:7, y:54,t:'gold'}, {x:41,y:16,t:''},     {x:62,y:47,t:'rose'},
-  ];
 
-  // Extra nodes unlocked at 150 taps
-  const EXTRA_POSITIONS = [
-    {x:32,y:35,t:'gold'}, {x:68,y:28,t:''},     {x:90,y:60,t:'gold'},
-    {x:48,y:65,t:''},     {x:18,y:40,t:'rose'},  {x:75,y:85,t:'gold'},
-  ];
+const DailyEngine = (() => {
+  const KEY_DAILY    = 'lb_last_daily';
+  const INTERVAL_MS  = 20 * 60 * 1000;  // 20 minutes
+  const FIRE_CHANCE  = 0.15;             // 15% per tick
 
-  let _canvas    = null;
-  let _nodes     = [];
-  let _fieldEl   = null;
-  let _onTap     = null;
-  let _goldMode  = false;
+  let _interval = null;
 
-  /* ── Build initial node set ──────────────────── */
-  function build(fieldEl, canvasEl, onTap) {
-    _canvas  = canvasEl;
-    _fieldEl = fieldEl;
-    _onTap   = onTap;
-    fieldEl.innerHTML = '';
-    _nodes = [];
+  function _pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-    BASE_POSITIONS.forEach(pos => _addNode(pos));
+  /* ── Daily greeting ────────────────────────── */
+  function _checkDaily() {
+    const today = new Date().toDateString();
+    const last  = localStorage.getItem(KEY_DAILY);
+    if (last === today) return;
 
-    // Restore unlock states without re-triggering celebrations
-    if (typeof UnlockEngine !== 'undefined') {
-      if (UnlockEngine.hasFeature('gold_nodes'))         _setGoldMode(true);
-      if (UnlockEngine.hasFeature('full_constellation')) _addExtraNodes();
-    }
+    localStorage.setItem(KEY_DAILY, today);
 
-    setTimeout(redraw, 120);
-    window.addEventListener('resize', redraw, { passive: true });
+    // Prefer an admin message; fall back to mood message
+    const adminMsg = AdminEngine.getRandomAdminMsg();
+    const msg = adminMsg || MoodEngine.getMessage();
 
-    // Listen for unlock events
-    window.addEventListener('lb:goldNodes',           () => _setGoldMode(true));
-    window.addEventListener('lb:expandConstellation', _addExtraNodes);
+    // Small delay so the main screen has settled
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('lb:showMessage', {
+        detail: { message: msg, source: 'daily' }
+      }));
+    }, 2500);
   }
 
-  function _addNode(pos) {
-    const btn = document.createElement('button');
-    const type = _goldMode ? 'gold' : (pos.t || '');
-    btn.className = 'node' + (type ? ' ' + type : '');
-    btn.setAttribute('aria-label', 'Tap for a message');
-    const fy = -(6 + Math.random() * 13);
-    const fd = 4  + Math.random() * 4;
-    btn.style.cssText = `left:${pos.x}%;top:${pos.y}%;--fd:${fd}s;--fy:${fy}px;animation-delay:${Math.random()*fd}s`;
-    btn.addEventListener('click', _onTap);
-    _fieldEl.appendChild(btn);
-    _nodes.push(btn);
-    return btn;
-  }
+  /* ── Thinking of you interval ──────────────── */
+  function _startInterval() {
+    if (_interval) return;
 
-  function _addExtraNodes() {
-    EXTRA_POSITIONS.forEach(pos => {
-      // Animate in
-      const btn = _addNode(pos);
-      btn.style.opacity = '0';
-      btn.style.transition = 'opacity 1.2s ease';
-      setTimeout(() => { btn.style.opacity = ''; }, 100 + Math.random() * 800);
-    });
-    setTimeout(redraw, 1200);
-  }
+    _interval = setInterval(() => {
+      if (document.hidden) return;
+      if (Math.random() > FIRE_CHANCE) return;
 
-  function _setGoldMode(val) {
-    _goldMode = val;
-    _nodes.forEach(n => {
-      n.classList.remove('rose');
-      n.classList.add('gold');
-    });
-    redraw();
-  }
-
-  /* ── Canvas line drawing ─────────────────────── */
-  function redraw() {
-    if (!_canvas || !_nodes.length) return;
-    const ctx = _canvas.getContext('2d');
-    const W   = _canvas.width  = _canvas.offsetWidth;
-    const H   = _canvas.height = _canvas.offsetHeight;
-    ctx.clearRect(0, 0, W, H);
-
-    const cr  = _canvas.getBoundingClientRect();
-    const pts = _nodes.map(n => {
-      const r = n.getBoundingClientRect();
-      return { x: r.left + r.width/2 - cr.left, y: r.top + r.height/2 - cr.top };
-    });
-
-    const MAX = Math.min(W, H) * 0.44;
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
-        if (d > MAX) continue;
-        const alpha = (1 - d / MAX) * 0.18;
-        // Gold mode: draw warm gold lines; default: violet
-        ctx.strokeStyle = _goldMode
-          ? `rgba(253,211,77,${alpha})`
-          : `rgba(192,132,252,${alpha})`;
-        ctx.lineWidth   = 0.8;
-        ctx.setLineDash([3, 6]);
-        ctx.beginPath();
-        ctx.moveTo(pts[i].x, pts[i].y);
-        ctx.lineTo(pts[j].x, pts[j].y);
-        ctx.stroke();
+      // 25% chance: play an admin voice clip as a "I saved something for you" surprise
+      const adminClip = AdminEngine.getRandomAdminClip();
+      if (adminClip && Math.random() < 0.25) {
+        try { new Audio(adminClip.data).play(); } catch {}
+        window.dispatchEvent(new CustomEvent('lb:showMessage', {
+          detail: { message: { t: '🎙 I saved something for you ✦', c: 'voice memory', _isClip: true }, source: 'interval' }
+        }));
+        return;
       }
-    }
+
+      // Otherwise: admin moment → admin text message → mood message
+      const moment   = AdminEngine.getRandomMoment();
+      const adminMsg = AdminEngine.getRandomAdminMsg();
+      const msg = moment
+        ? { t: moment.t, c: 'thinking of you ✦' }
+        : (adminMsg || MoodEngine.getMessage());
+
+      window.dispatchEvent(new CustomEvent('lb:showMessage', {
+        detail: { message: msg, source: 'interval' }
+      }));
+    }, INTERVAL_MS);
   }
 
-  return { build, redraw };
+  /* ── Public ────────────────────────────────── */
+  function init() {
+    _checkDaily();
+    _startInterval();
+  }
+
+  function stop() {
+    if (_interval) { clearInterval(_interval); _interval = null; }
+  }
+
+  return { init, stop };
 })();
