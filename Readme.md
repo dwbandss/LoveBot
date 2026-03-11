@@ -37,21 +37,21 @@ Inside the panel you can:
 
 There are four systems running quietly in the background:
 
-**Daily greeting** — once per day when she opens the app, she gets a message. If you've added private messages, one of those shows up first.
+**Daily greeting** — once per day when he opens the app, he gets a message. If you've added private messages, one of those shows up first.
 
-**Thinking of you interval** — every 20 minutes, there's a 15% chance the app sends her a message on its own, without her doing anything. If you've uploaded voice clips, there's also a chance it plays one of those instead.
+**Thinking of you interval** — every 20 minutes, there's a 15% chance the app sends his a message on its own, without hi  doing anything. If you've uploaded voice clips, there's also a chance it plays one of those instead.
 
 **Surprise engine** — separate from the interval, fires every 2–8 hours randomly.
 
-**Push notifications** — if she enables notifications in Settings, LoveBot will send a system notification to her phone occasionally. Tapping it opens the app and shows a message.
+**Push notifications** — if he enables notifications in Settings, LoveBot will send a system notification to hiss phone occasionally. Tapping it opens the app and shows a message.
 
-None of these feel mechanical because the timing is randomised. She'll never know exactly when the next one is coming.
+None of these feel mechanical because the timing is randomised. he'll never know exactly when the next one is coming.
 
 ---
 
 ## The progression system
 
-The more she uses the app, the more it changes. These are real visual unlocks, not just celebration screens:
+The more he uses the app, the more it changes. These are real visual unlocks, not just celebration screens:
 
 | Taps | What unlocks |
 |------|-------------|
@@ -70,7 +70,7 @@ This is intentional. The app is supposed to feel like it grows alongside her.
 
 Once a day, the app quietly asks: *"What made you smile today?"*
 
-She can type anything or skip it. If she answers, the app remembers. Later — days or weeks later — while she's tapping the orb, it might say:
+He can type anything or skip it. If he answers, the app remembers. Later — days or weeks later — while he's tapping the orb, it might say:
 
 *"You once told me talking to your friend made you smile. I hope today has something like that too."*
 
@@ -95,22 +95,21 @@ Three wrong password attempts triggers a 60-second lockout. The attempt counter 
 The creator panel auto-locks itself after 30 minutes of inactivity. Even if you leave your phone unlocked and she picks it up, the panel closes itself.
 
 **What this doesn't protect against**
-I want to be honest: this is client-side security. It's meaningful protection against casual snooping and DevTools glancing — which covers 99% of real-world scenarios. It does not protect against someone who is technically skilled, has extended access to the device, and is specifically trying to extract the data. Don't store anything in voice clips or messages that would genuinely harm you if it were found by a determined adversary.
+I want to be honest: It does not protect against someone who is technically skilled, has extended access to the device, and is specifically trying to extract the data. Don't store anything in voice clips or messages that would genuinely harm you.
 
-For a personal gift app between two people who trust each other, this is more than enough.
+For a personal gift app between two people who trust each other, this is more than enough :) .
 
----
 
 ## Hosting on GitHub Pages
 
-The app is a pure static site — HTML, CSS, and JS. No server, no database, no account. Everything lives in the browser's localStorage on her device.
+The app is a pure static site — HTML, CSS, and JS. No server, no database, no account. Everything lives in the browser's localStorage on his device.
 
 To host it:
 
-1. Push the entire `lovebot2/` folder to a GitHub repository
+1. Push the entire `lovebot/` folder to a GitHub repository
 2. Go to **Settings → Pages → Source** and set it to your main branch, root folder
 3. GitHub gives you a URL like `https://yourusername.github.io/lovebot2/`
-4. Send her that link and tell her to add it to her home screen
+4. Send her/him that link and tell her/him to add it to her/him home screen.
 
 **Important:** The `manifest.json` file must be at the root of the repo (next to `index.html`), not inside the `pwa/` folder. The service worker registers from `./pwa/service-worker.js` relative to the root. Both of these are already set up correctly.
 
@@ -128,7 +127,7 @@ On iPhone:
 ## File structure
 
 ```
-lovebot2/
+lovebot/
 ├── index.html               — the whole UI lives here
 ├── style.css                — dark cosmic theme + light mode
 ├── app.js                   — wires everything together
