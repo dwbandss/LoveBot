@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-title" content="LoveBot"/>
   <title>LoveBot 💌</title>
-  <link rel="manifest" href="pwa/manifest.json"/>
+  <link rel="manifest" href="manifest.json"/>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -170,10 +170,16 @@
       </label>
     </div>
     <div class="set-row">
-      <!-- Night mode = light theme toggle -->
       <span>Light mode ☀️</span>
       <label class="toggle">
         <input type="checkbox" id="tog-night">
+        <span class="toggle-sl"></span>
+      </label>
+    </div>
+    <div class="set-row">
+      <span>Surprise notifications 🔔</span>
+      <label class="toggle">
+        <input type="checkbox" id="tog-notif">
         <span class="toggle-sl"></span>
       </label>
     </div>
@@ -263,7 +269,7 @@
 <script src="modules/surpriseEngine.js"></script>
 <script src="modules/adminEngine.js"></script>
 <script src="modules/memoryAI.js"></script>
-<script src="modules/dailyEngine.js"></script>
+<script src="modules/notificationEngine.js"></script>
 <script src="app.js"></script>
 
 </body>

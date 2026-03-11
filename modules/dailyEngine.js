@@ -1,79 +1,121 @@
 /**
- * modules/dailyEngine.js
- * ─────────────────────────────────────────────────────
- * Two automatic delivery systems:
+ * modules/constellationEngine.js  v3.0
  *
- * 1. DAILY GREETING — fires once per calendar day when the user
- *    opens the app (after the main screen loads).
- *
- * 2. THINKING OF YOU — fires every 20 minutes with a 15% chance,
- *    using admin "moments" if available, otherwise a mood message.
- *    Only fires when the tab is visible.
- *
- * Public API
- *   DailyEngine.init()   — call once from _initMain()
- *   DailyEngine.stop()   — cancel intervals (cleanup)
+ * Changes from v2:
+ *  - Supports lb:goldNodes event → redraws lines in gold
+ *  - Supports lb:expandConstellation → adds 6 more nodes (150-tap unlock)
+ *  - applyCurrentUnlocks() called on build so state is restored on reload
  */
+const ConstellationEngine = (() => {
+  const BASE_POSITIONS = [
+    {x:14,y:18,t:''},     {x:73,y:13,t:'rose'}, {x:87,y:40,t:''},
+    {x:80,y:70,t:'gold'}, {x:54,y:82,t:'rose'}, {x:22,y:76,t:''},
+    {x:7, y:54,t:'gold'}, {x:41,y:16,t:''},     {x:62,y:47,t:'rose'},
+  ];
 
-const DailyEngine = (() => {
-  const KEY_DAILY    = 'lb_last_daily';
-  const INTERVAL_MS  = 20 * 60 * 1000;  // 20 minutes
-  const FIRE_CHANCE  = 0.15;             // 15% per tick
+  // Extra nodes unlocked at 150 taps
+  const EXTRA_POSITIONS = [
+    {x:32,y:35,t:'gold'}, {x:68,y:28,t:''},     {x:90,y:60,t:'gold'},
+    {x:48,y:65,t:''},     {x:18,y:40,t:'rose'},  {x:75,y:85,t:'gold'},
+  ];
 
-  let _interval = null;
+  let _canvas    = null;
+  let _nodes     = [];
+  let _fieldEl   = null;
+  let _onTap     = null;
+  let _goldMode  = false;
 
-  function _pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  /* ── Build initial node set ──────────────────── */
+  function build(fieldEl, canvasEl, onTap) {
+    _canvas  = canvasEl;
+    _fieldEl = fieldEl;
+    _onTap   = onTap;
+    fieldEl.innerHTML = '';
+    _nodes = [];
 
-  /* ── Daily greeting ────────────────────────── */
-  function _checkDaily() {
-    const today = new Date().toDateString();
-    const last  = localStorage.getItem(KEY_DAILY);
-    if (last === today) return;
+    BASE_POSITIONS.forEach(pos => _addNode(pos));
 
-    localStorage.setItem(KEY_DAILY, today);
+    // Restore unlock states without re-triggering celebrations
+    if (typeof UnlockEngine !== 'undefined') {
+      if (UnlockEngine.hasFeature('gold_nodes'))         _setGoldMode(true);
+      if (UnlockEngine.hasFeature('full_constellation')) _addExtraNodes();
+    }
 
-    // Prefer an admin message; fall back to mood message
-    const adminMsg = AdminEngine.getRandomAdminMsg();
-    const msg = adminMsg || MoodEngine.getMessage();
+    setTimeout(redraw, 120);
+    window.addEventListener('resize', redraw, { passive: true });
 
-    // Small delay so the main screen has settled
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('lb:showMessage', {
-        detail: { message: msg, source: 'daily' }
-      }));
-    }, 2500);
+    // Listen for unlock events
+    window.addEventListener('lb:goldNodes',           () => _setGoldMode(true));
+    window.addEventListener('lb:expandConstellation', _addExtraNodes);
   }
 
-  /* ── Thinking of you interval ──────────────── */
-  function _startInterval() {
-    if (_interval) return;
-
-    _interval = setInterval(() => {
-      if (document.hidden) return;           // don't fire if tab hidden
-      if (Math.random() > FIRE_CHANCE) return;
-
-      // Priority: admin "moment" → admin message → mood message
-      const moment   = AdminEngine.getRandomMoment();
-      const adminMsg = AdminEngine.getRandomAdminMsg();
-      const msg = moment
-        ? { t: moment.t, c: 'thinking of you ✦' }
-        : (adminMsg || MoodEngine.getMessage());
-
-      window.dispatchEvent(new CustomEvent('lb:showMessage', {
-        detail: { message: msg, source: 'interval' }
-      }));
-    }, INTERVAL_MS);
+  function _addNode(pos) {
+    const btn = document.createElement('button');
+    const type = _goldMode ? 'gold' : (pos.t || '');
+    btn.className = 'node' + (type ? ' ' + type : '');
+    btn.setAttribute('aria-label', 'Tap for a message');
+    const fy = -(6 + Math.random() * 13);
+    const fd = 4  + Math.random() * 4;
+    btn.style.cssText = `left:${pos.x}%;top:${pos.y}%;--fd:${fd}s;--fy:${fy}px;animation-delay:${Math.random()*fd}s`;
+    btn.addEventListener('click', _onTap);
+    _fieldEl.appendChild(btn);
+    _nodes.push(btn);
+    return btn;
   }
 
-  /* ── Public ────────────────────────────────── */
-  function init() {
-    _checkDaily();
-    _startInterval();
+  function _addExtraNodes() {
+    EXTRA_POSITIONS.forEach(pos => {
+      // Animate in
+      const btn = _addNode(pos);
+      btn.style.opacity = '0';
+      btn.style.transition = 'opacity 1.2s ease';
+      setTimeout(() => { btn.style.opacity = ''; }, 100 + Math.random() * 800);
+    });
+    setTimeout(redraw, 1200);
   }
 
-  function stop() {
-    if (_interval) { clearInterval(_interval); _interval = null; }
+  function _setGoldMode(val) {
+    _goldMode = val;
+    _nodes.forEach(n => {
+      n.classList.remove('rose');
+      n.classList.add('gold');
+    });
+    redraw();
   }
 
-  return { init, stop };
+  /* ── Canvas line drawing ─────────────────────── */
+  function redraw() {
+    if (!_canvas || !_nodes.length) return;
+    const ctx = _canvas.getContext('2d');
+    const W   = _canvas.width  = _canvas.offsetWidth;
+    const H   = _canvas.height = _canvas.offsetHeight;
+    ctx.clearRect(0, 0, W, H);
+
+    const cr  = _canvas.getBoundingClientRect();
+    const pts = _nodes.map(n => {
+      const r = n.getBoundingClientRect();
+      return { x: r.left + r.width/2 - cr.left, y: r.top + r.height/2 - cr.top };
+    });
+
+    const MAX = Math.min(W, H) * 0.44;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+        if (d > MAX) continue;
+        const alpha = (1 - d / MAX) * 0.18;
+        // Gold mode: draw warm gold lines; default: violet
+        ctx.strokeStyle = _goldMode
+          ? `rgba(253,211,77,${alpha})`
+          : `rgba(192,132,252,${alpha})`;
+        ctx.lineWidth   = 0.8;
+        ctx.setLineDash([3, 6]);
+        ctx.beginPath();
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[j].x, pts[j].y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  return { build, redraw };
 })();

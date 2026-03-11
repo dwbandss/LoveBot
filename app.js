@@ -1,92 +1,83 @@
 /**
- * app.js — LoveBot Orchestrator v3
+ * app.js — LoveBot Orchestrator v3.0
  *
- * Wires all modules:
- *   MoodEngine · VoiceEngine · EmotionEngine · VoiceManager
- *   UnlockEngine · ConstellationEngine · SurpriseEngine
- *   AdminEngine · MemoryAI · DailyEngine
- *
- * Theme:
- *   Default      → dark cosmic  (:root in style.css)
- *   body.light   → warm daylight (toggled via Settings)
+ * Changes from v2:
+ *  - UnlockEngine.applyAllUnlocks() called on _initMain() to restore UI
+ *  - UnlockEngine.triggerFeature() called when milestone hit
+ *  - NotificationEngine wired to settings toggle
+ *  - voiceManager hidden from user (admin-only uploads)
+ *  - lb:showMessage + lb:surprise both handled
+ *  - Settings saves/loads notification preference
  */
-
 (function () {
   'use strict';
 
   const $ = id => document.getElementById(id);
 
-  /* ══════════════════════════════════════════════
-     DOM REFS
-  ══════════════════════════════════════════════ */
-  const splashScreen    = $('splash');
-  const moodScreen      = $('mood');
-  const mainScreen      = $('main');
+  /* ── DOM refs ────────────────────────────────── */
+  const splashScreen = $('splash');
+  const moodScreen   = $('mood');
+  const mainScreen   = $('main');
 
-  const botStatus       = $('bot-status');
-  const moodIcon        = $('mood-icon');
-  const statCount       = $('stat-count');
-  const statUnlock      = $('stat-unlock');
+  const botStatus    = $('bot-status');
+  const moodIcon     = $('mood-icon');
+  const statCount    = $('stat-count');
+  const statUnlock   = $('stat-unlock');
 
-  const msgOverlay      = $('msg-overlay');
-  const typingEl        = $('typing');
-  const msgBodyEl       = $('msg-body');
-  const msgStickerEl    = $('msg-sticker');
-  const msgCatEl        = $('msg-cat');
-  const msgTxtEl        = $('msg-txt');
-  const btnVoice        = $('btn-voice');
-  const btnSave         = $('btn-save');
-  const msgClose        = $('msg-close');
+  const msgOverlay   = $('msg-overlay');
+  const typingEl     = $('typing');
+  const msgBodyEl    = $('msg-body');
+  const msgStickerEl = $('msg-sticker');
+  const msgCatEl     = $('msg-cat');
+  const msgTxtEl     = $('msg-txt');
+  const btnVoice     = $('btn-voice');
+  const btnSave      = $('btn-save');
+  const msgClose     = $('msg-close');
 
-  const memOverlay      = $('mem-overlay');
-  const memGrid         = $('mem-grid');
-  const memEmpty        = $('mem-empty');
+  const memOverlay   = $('mem-overlay');
+  const memGrid      = $('mem-grid');
+  const memEmpty     = $('mem-empty');
 
-  const setOverlay      = $('set-overlay');
-  const togVoice        = $('tog-voice');
-  const togNight        = $('tog-night');
-  const vmBadge         = $('vm-badge');
+  const setOverlay   = $('set-overlay');
+  const togVoice     = $('tog-voice');
+  const togNight     = $('tog-night');
+  const togNotif     = $('tog-notif');
+  const vmBadge      = $('vm-badge');
 
-  const vmOverlay       = $('vm-overlay');
-  const vmDrop          = $('vm-drop');
-  const vmFileInput     = $('vm-file');
-  const vmList          = $('vm-list');
-  const vmEmpty         = $('vm-empty');
-  const vmCount         = $('vm-count');
-  const vmChance        = $('vm-chance');
-  const vmChanceVal     = $('vm-chance-val');
+  const vmOverlay    = $('vm-overlay');
+  const vmDrop       = $('vm-drop');
+  const vmFileInput  = $('vm-file');
+  const vmList       = $('vm-list');
+  const vmEmpty      = $('vm-empty');
+  const vmCount      = $('vm-count');
+  const vmChance     = $('vm-chance');
+  const vmChanceVal  = $('vm-chance-val');
 
-  const ulOverlay       = $('ul-overlay');
-  const ulGlyph         = $('ul-glyph');
-  const ulTitle         = $('ul-title');
-  const ulMsg           = $('ul-msg');
-  const confettiBox     = $('confetti-box');
+  const ulOverlay    = $('ul-overlay');
+  const ulGlyph      = $('ul-glyph');
+  const ulTitle      = $('ul-title');
+  const ulMsg        = $('ul-msg');
+  const confettiBox  = $('confetti-box');
 
-  const gratOverlay     = $('gratitude-overlay');
-  const gratInput       = $('gratitude-input');
+  const gratOverlay  = $('gratitude-overlay');
+  const gratInput    = $('gratitude-input');
 
-  const canvas          = $('cvs');
-  const nodeField       = $('nodes');
+  const canvas       = $('cvs');
+  const nodeField    = $('nodes');
 
-  /* ══════════════════════════════════════════════
-     STATE
-  ══════════════════════════════════════════════ */
+  /* ── State ───────────────────────────────────── */
   let currentMsg    = null;
   let activeOverlay = null;
   let ttsEnabled    = true;
   let mainReady     = false;
 
-  /* ══════════════════════════════════════════════
-     SCREEN
-  ══════════════════════════════════════════════ */
+  /* ── Screens ─────────────────────────────────── */
   function showScreen(el) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     el.classList.add('active');
   }
 
-  /* ══════════════════════════════════════════════
-     OVERLAYS
-  ══════════════════════════════════════════════ */
+  /* ── Overlays ────────────────────────────────── */
   function openOverlay(el) {
     if (activeOverlay && activeOverlay !== el) _doClose(activeOverlay);
     el.classList.remove('hidden');
@@ -109,38 +100,19 @@
   [msgOverlay, memOverlay, setOverlay, vmOverlay, ulOverlay, gratOverlay].forEach(ov => {
     ov.addEventListener('click', e => { if (e.target === ov) closeOverlay(ov); });
   });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeOverlay(activeOverlay);
-  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOverlay(activeOverlay); });
 
-  /* ══════════════════════════════════════════════
-     EMOTION MAP — category → lead sticker emoji
-  ══════════════════════════════════════════════ */
-  const STICKER_MAP = {
-    'affirmation':       '💖',
-    'compliment':        '🌸',
-    'wonder':            '✨',
-    'connection':        '💞',
-    'breathe':           '🍃',
-    'validation':        '🫶',
-    'comfort':           '💜',
-    'hope':              '🌈',
-    'night':             '🌙',
-    'memory':            '💭',
-    'from you 💌':       '💌',
-    'time capsule 💌':   '🎁',
-    'voice clip':        '🎙️',
-    'voice memory':      '🎤',
-    'thinking of you ✦': '🌙',
-    'voice note':        '🔊',
+  /* ── Sticker map ─────────────────────────────── */
+  const STICKER = {
+    'affirmation':'💖','compliment':'🌸','wonder':'✨','connection':'💞',
+    'breathe':'🍃','validation':'🫶','comfort':'💜','hope':'🌈',
+    'night':'🌙','memory':'💭','from you 💌':'💌','time capsule 💌':'🎁',
+    'voice clip':'🎙️','voice memory':'🎤','thinking of you ✦':'🌙','voice note':'🔊',
   };
 
-  /* ══════════════════════════════════════════════
-     MESSAGE DISPLAY
-  ══════════════════════════════════════════════ */
+  /* ── Show message card ───────────────────────── */
   function showMessage(msg) {
     currentMsg = msg;
-
     typingEl.style.display  = 'flex';
     msgBodyEl.classList.add('hidden');
     msgClose.style.display  = 'none';
@@ -148,16 +120,13 @@
     btnSave.disabled        = false;
     btnVoice.textContent    = '🔊 Listen';
 
-    // Screen glow immediately
     EmotionEngine.glowScreen(msg.c);
     openOverlay(msgOverlay);
 
-    const delay = 1300 + Math.random() * 800;
     setTimeout(() => {
       typingEl.style.display = 'none';
 
-      // Sticker
-      const sticker = STICKER_MAP[msg.c] || null;
+      const sticker = STICKER[msg.c] || null;
       if (sticker && !msg._isClip) {
         msgStickerEl.textContent = sticker;
         msgStickerEl.classList.remove('hidden');
@@ -170,19 +139,16 @@
       msgBodyEl.classList.remove('hidden');
       msgClose.style.display = '';
 
-      // Emoji burst
       if (!msg._isClip) EmotionEngine.burstEmoji(msg.c);
 
-      // Auto emotional TTS (25% chance)
+      // Auto-speak 25% of the time
       if (!msg._isClip && ttsEnabled && Math.random() < 0.25) {
         setTimeout(() => EmotionEngine.speakEmotional(msg.t, msg.c), 400);
       }
-    }, delay);
+    }, 1300 + Math.random() * 800);
   }
 
-  /* ══════════════════════════════════════════════
-     TAP HANDLER (orb + nodes)
-  ══════════════════════════════════════════════ */
+  /* ── Tap handler ─────────────────────────────── */
   function handleTap() {
     const result = UnlockEngine.increment();
     _updateStats();
@@ -191,94 +157,74 @@
     const memMsg = MemoryAI.getCallbackMessage();
     if (memMsg) { showMessage(memMsg); _checkMilestone(result); return; }
 
-    // 2. Admin private message (40% if any exist)
+    // 2. Admin private text message (40% if any)
     const adminMsg = AdminEngine.getRandomAdminMsg();
     if (adminMsg && Math.random() < 0.4) {
       showMessage({ t: adminMsg.t, c: adminMsg.c });
-      _checkMilestone(result);
-      return;
+      _checkMilestone(result); return;
     }
 
-    // 3. Admin voice clip (feels like "I saved something for you")
+    // 3. Admin voice clip — "I saved something for you" moment (voice_memories unlocked: higher chance)
     const adminClip = AdminEngine.getRandomAdminClip();
-    if (adminClip && Math.random() < 0.25) {
+    const clipChance = UnlockEngine.hasFeature('voice_memories') ? 0.40 : 0.20;
+    if (adminClip && Math.random() < clipChance) {
       try { new Audio(adminClip.data).play(); } catch {}
       showMessage({ t: '🎙 I saved something for you ✦', c: 'voice memory', _isClip: true });
-      _checkMilestone(result);
-      return;
+      _checkMilestone(result); return;
     }
 
-    // 4. User voice clip (from voiceManager)
-    const hasClips   = VoiceManager.count() > 0;
-    const rollClip   = hasClips && (Math.random() * 100 < VoiceManager.getChance());
-    if (rollClip) {
-      VoiceManager.playRandom();
-      showMessage({ t: '🎙 Playing your voice clip…', c: 'voice clip', _isClip: true });
-      _checkMilestone(result);
-      return;
-    }
-
-    // 5. TTS-only line (20% when no clips loaded)
-    if (ttsEnabled && VoiceEngine.isSupported() && !hasClips && Math.random() < 0.2) {
-      const line = VoiceEngine.randomTTS();
-      if (line) { showMessage({ t: line, c: 'voice note' }); _checkMilestone(result); return; }
-    }
-
-    // 6. Default mood message
+    // 4. Default mood message
     showMessage(MoodEngine.getMessage());
     _checkMilestone(result);
   }
 
   function _checkMilestone(result) {
-    if (result.unlocked && result.milestone) {
+    if (!result.unlocked || !result.milestone) return;
+    const m = result.milestone;
+
+    // Show unlock overlay after 5s (let user read the message first)
+    setTimeout(() => {
+      closeOverlay(msgOverlay);
       setTimeout(() => {
-        closeOverlay(msgOverlay);
-        setTimeout(() => {
-          ulGlyph.textContent = result.milestone.g;
-          ulTitle.textContent = result.milestone.title;
-          ulMsg.textContent   = result.milestone.msg;
-          openOverlay(ulOverlay);
-          UnlockEngine.spawnConfetti(confettiBox);
-        }, 300);
-      }, 5000);
-    }
+        ulGlyph.textContent = m.g;
+        ulTitle.textContent = m.title;
+        ulMsg.textContent   = m.msg;
+        openOverlay(ulOverlay);
+        UnlockEngine.spawnConfetti(confettiBox);
+        // Apply real UI feature
+        if (m.feature) UnlockEngine.triggerFeature(m.feature, m);
+      }, 300);
+    }, 5000);
   }
 
-  /* ══════════════════════════════════════════════
-     STATS
-  ══════════════════════════════════════════════ */
+  /* ── Stats bar ───────────────────────────────── */
   function _updateStats() {
     const n    = UnlockEngine.getCount();
     const next = UnlockEngine.getNextMilestone();
-    statCount.textContent  = `✦ ${n} moment${n!==1?'s':''}`;
-    statUnlock.textContent = next ? `🔓 next unlock: ${next.n}` : '🔓 all unlocked ✦';
+    statCount.textContent  = `✦ ${n} moment${n !== 1 ? 's' : ''}`;
+    statUnlock.textContent = next ? `🔓 next: ${next.n} taps` : '🌌 all unlocked ✦';
   }
 
-  /* ══════════════════════════════════════════════
-     GRATITUDE PROMPT
-  ══════════════════════════════════════════════ */
+  /* ── Gratitude prompt ────────────────────────── */
   function showGratitudePrompt() {
     gratInput.value = '';
     openOverlay(gratOverlay);
   }
-
   $('gratitude-save').addEventListener('click', () => {
     const txt = gratInput.value.trim();
-    if (txt) { MemoryAI.saveGratitude(txt); }
+    if (txt) MemoryAI.saveGratitude(txt);
+    localStorage.setItem('lb_ai_last_q', new Date().toDateString());
     closeOverlay(gratOverlay);
   });
   $('gratitude-skip').addEventListener('click', () => {
-    // Mark today as asked even if skipped so it doesn't re-prompt
     localStorage.setItem('lb_ai_last_q', new Date().toDateString());
     closeOverlay(gratOverlay);
   });
 
-  /* ══════════════════════════════════════════════
-     MEMORIES PANEL
-  ══════════════════════════════════════════════ */
+  /* ── Memories panel ──────────────────────────── */
   const MEM_KEY = 'lb_memories';
-  function _getMems()       { try { return JSON.parse(localStorage.getItem(MEM_KEY)||'[]'); } catch { return []; } }
-  function _saveMem(text)   {
+  function _getMems() { try { return JSON.parse(localStorage.getItem(MEM_KEY)||'[]'); } catch { return []; } }
+  function _saveMem(text) {
     const m = _getMems();
     m.unshift({ text, date: new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}), id:Date.now() });
     localStorage.setItem(MEM_KEY, JSON.stringify(m));
@@ -300,24 +246,24 @@
     });
   }
 
-  /* ══════════════════════════════════════════════
-     SETTINGS
-  ══════════════════════════════════════════════ */
+  /* ── Settings ────────────────────────────────── */
   const SETTINGS_KEY = 'lb_settings';
   function _loadSettings() { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)||'{}'); } catch { return {}; } }
   function _saveSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
   function _applySettings(s) {
     ttsEnabled = s.tts !== false;
-    togVoice.checked = ttsEnabled;
+    if (togVoice) togVoice.checked = ttsEnabled;
     VoiceEngine.setEnabled(ttsEnabled);
+
     const isLight = Boolean(s.light);
-    togNight.checked = isLight;
+    if (togNight) togNight.checked = isLight;
     document.body.classList.toggle('light', isLight);
+
+    const notifOn = s.notif !== false;
+    if (togNotif) togNotif.checked = notifOn;
   }
 
-  /* ══════════════════════════════════════════════
-     EVENT WIRING
-  ══════════════════════════════════════════════ */
+  /* ── Events ──────────────────────────────────── */
 
   // Splash
   $('btn-start').addEventListener('click', () => {
@@ -326,11 +272,6 @@
     } else {
       showScreen(moodScreen);
     }
-  });
-
-  // Admin: tap splash title 5×
-  $('splash-title').addEventListener('click', () => {
-    // handled by AdminEngine.init()
   });
 
   // Mood
@@ -347,10 +288,9 @@
 
   // Top bar
   $('btn-mood-change').addEventListener('click', () => showScreen(moodScreen));
-  $('btn-memories').addEventListener('click',    () => { _renderMems(); openOverlay(memOverlay); });
-  $('btn-settings').addEventListener('click',    () => {
+  $('btn-memories').addEventListener('click', () => { _renderMems(); openOverlay(memOverlay); });
+  $('btn-settings').addEventListener('click', () => {
     _applySettings(_loadSettings());
-    vmBadge.textContent = VoiceManager.count() ? `(${VoiceManager.count()})` : '';
     openOverlay(setOverlay);
   });
 
@@ -360,14 +300,15 @@
   btnVoice.addEventListener('click', () => {
     if (!currentMsg) return;
     if (currentMsg._isClip) {
-      // replay admin clip or user clip
-      const adminClip = AdminEngine.getRandomAdminClip();
-      if (adminClip) { try { new Audio(adminClip.data).play(); } catch {} return; }
-      if (VoiceManager.count()) VoiceManager.playRandom();
+      const clip = AdminEngine.getRandomAdminClip();
+      if (clip) { try { new Audio(clip.data).play(); } catch {} }
       return;
     }
-    if (EmotionEngine.stop(), VoiceEngine.isSpeaking()) { VoiceEngine.stop(); }
-    else { EmotionEngine.speakEmotional(currentMsg.t, currentMsg.c); }
+    if (VoiceEngine.isSpeaking() || window.speechSynthesis?.speaking) {
+      EmotionEngine.stop();
+    } else {
+      EmotionEngine.speakEmotional(currentMsg.t, currentMsg.c);
+    }
   });
 
   window.addEventListener('lb:voice-start', () => { btnVoice.textContent = '⏹ Stop'; });
@@ -385,23 +326,29 @@
 
   // Settings save
   $('set-close').addEventListener('click', () => {
-    const s = { tts: togVoice.checked, light: togNight.checked };
-    _applySettings(s); _saveSettings(s); closeOverlay(setOverlay);
+    const s = { tts: togVoice.checked, light: togNight.checked, notif: togNotif.checked };
+    _applySettings(s); _saveSettings(s);
+    NotificationEngine.setEnabled(togNotif.checked);
+    closeOverlay(setOverlay);
   });
   togNight.addEventListener('change', () => {
     document.body.classList.toggle('light', togNight.checked);
   });
 
-  // Open voice manager
-  $('btn-open-vm').addEventListener('click', () => {
-    closeOverlay(setOverlay); VoiceManager.render(); openOverlay(vmOverlay);
-  });
-  $('vm-close').addEventListener('click', () => {
-    VoiceManager.stopCurrent(); closeOverlay(vmOverlay);
-    _applySettings(_loadSettings());
-    vmBadge.textContent = VoiceManager.count() ? `(${VoiceManager.count()})` : '';
-    openOverlay(setOverlay);
-  });
+  // Voice manager (admin only — button hidden from user UI but still functional)
+  const btnVm = $('btn-open-vm');
+  if (btnVm) {
+    btnVm.addEventListener('click', () => {
+      closeOverlay(setOverlay); VoiceManager.render(); openOverlay(vmOverlay);
+    });
+  }
+  const vmCloseBtn = $('vm-close');
+  if (vmCloseBtn) {
+    vmCloseBtn.addEventListener('click', () => {
+      VoiceManager.stopCurrent(); closeOverlay(vmOverlay);
+      _applySettings(_loadSettings()); openOverlay(setOverlay);
+    });
+  }
 
   // Unlock
   $('ul-close').addEventListener('click', () => closeOverlay(ulOverlay));
@@ -412,19 +359,15 @@
     localStorage.clear(); location.reload();
   });
 
-  // Surprise engine events (2–8 hr timer)
+  // Global message events (from DailyEngine, SurpriseEngine, NotificationEngine)
+  window.addEventListener('lb:showMessage', e => {
+    if (e.detail && e.detail.message) showMessage(e.detail.message);
+  });
   window.addEventListener('lb:surprise', e => {
     if (e.detail && e.detail.message) showMessage(e.detail.message);
   });
 
-  // Daily + interval engine
-  window.addEventListener('lb:showMessage', e => {
-    if (e.detail && e.detail.message) showMessage(e.detail.message);
-  });
-
-  /* ══════════════════════════════════════════════
-     MAIN INIT
-  ══════════════════════════════════════════════ */
+  /* ── Main init ───────────────────────────────── */
   function _initMain() {
     if (mainReady) return;
     mainReady = true;
@@ -439,15 +382,19 @@
     // Build constellation
     ConstellationEngine.build(nodeField, canvas, handleTap);
 
-    // Init engines
+    // Restore all visual unlock states (gold nodes, moon orb, etc.)
+    UnlockEngine.applyAllUnlocks();
+
+    // Start engines
     SurpriseEngine.init();
     DailyEngine.init();
     MemoryAI.init();
+    NotificationEngine.init();
 
-    // Admin: tap splash title OR "LoveBot" name in top bar 5×
+    // Admin: tap "LoveBot" text on splash OR top bar 5×
     AdminEngine.init($('splash-title'), $('bot-name'));
 
-    // Voice manager
+    // Voice manager (admin uploads only — user doesn't see this button)
     VoiceManager.init({
       dropEl:      vmDrop,
       fileEl:      vmFileInput,
@@ -459,20 +406,18 @@
       badgeEl:     vmBadge,
     });
 
-    // Daily gratitude prompt — delay 10s so main screen settles
+    // Daily gratitude prompt — 10s after main screen settles
     if (MemoryAI.shouldAskGratitude()) {
       setTimeout(showGratitudePrompt, 10000);
     }
   }
 
-  /* ══════════════════════════════════════════════
-     BOOT
-  ══════════════════════════════════════════════ */
+  /* ── Boot ────────────────────────────────────── */
   function boot() {
     _applySettings(_loadSettings());
     showScreen(splashScreen);
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('pwa/service-worker.js').catch(() => {});
+      navigator.serviceWorker.register('./pwa/service-worker.js').catch(() => {});
     }
   }
 
