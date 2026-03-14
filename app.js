@@ -228,11 +228,26 @@
     mems.forEach(m => {
       const card = document.createElement('div');
       card.className = 'mem-card';
-      card.innerHTML = `<p class="mem-txt">"${m.text}"</p><p class="mem-date">${m.date}</p><button class="mem-del">✕</button>`;
-      card.querySelector('.mem-del').addEventListener('click', () => {
+
+      const txt = document.createElement('p');
+      txt.className = 'mem-txt';
+      txt.textContent = `"${m.text}"`;
+
+      const date = document.createElement('p');
+      date.className = 'mem-date';
+      date.textContent = m.date;
+
+      const del = document.createElement('button');
+      del.className = 'mem-del';
+      del.textContent = '✕';
+      del.addEventListener('click', () => {
         localStorage.setItem(MEM_KEY, JSON.stringify(_getMems().filter(x=>x.id!==m.id)));
         _renderMems();
       });
+
+      card.appendChild(txt);
+      card.appendChild(date);
+      card.appendChild(del);
       memGrid.appendChild(card);
     });
   }

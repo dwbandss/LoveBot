@@ -5,11 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
   <meta name="theme-color" content="#0d0618"/>
   <meta name="description" content="LoveBot – your personal emotional companion"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-title" content="LoveBot"/>
-  <title>LoveBot</title>
-  <link rel="icon" type="image/png" sizes="96x96" href="assets\icons\heart.png"/>
+  <title>LoveBot 💌</title>
+  <link rel="icon" type="image/png" sizes="96x96" href="assets/icons/icon-96.png"/>
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png"/>
+  <link rel="manifest" href="manifest.json"/>
   <link rel="stylesheet" href="style.css"/>
+  <script>
+    (function(){
+      var n=function(){};
+      ['log','warn','info','debug','error','table','dir','group','groupEnd','time','timeEnd'].forEach(function(m){
+        try{ window.console[m]=n; }catch(e){}
+      });
+    })();
+  </script>
 </head>
 <body>
 

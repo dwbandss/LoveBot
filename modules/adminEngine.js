@@ -1,77 +1,191 @@
 /**
- * modules/adminEngine.js
+ * modules/adminEngine.js  v4.0
  * ─────────────────────────────────────────────────────
  * Private creator panel — only YOU can access it.
  *
- * ACCESS:  Tap the LoveBot logo/title on the splash screen 5× rapidly
- *          → password prompt appears → enter your secret code.
+ * ACCESS : Tap the "LoveBot" title 5× (splash or top bar)
+ *          → password prompt → enter your secret
  *
- * What you can do inside:
- *   • Add private custom text messages (injected into the message pool)
- *   • Upload your own voice clips (base64, same as voiceManager but private)
- *   • Write private "thinking of you" moments
- *   • Set / change the admin password
+ * SECURITY MEASURES (client-side, no server):
+ *   1. Password is stored as a SHA-256 hash — plain text never saved
+ *   2. localStorage keys are obfuscated (look like random strings)
+ *   3. Admin data values are base64-encoded (not plain JSON)
+ *   4. Brute-force lockout: 3 wrong attempts → 60 second cooldown
+ *   5. Session token expires: panel re-locks after 30 minutes idle
+ *   6. Console access guard: overrides console in production
  *
- * The recipient NEVER sees this panel — there is no button visible to them.
+ * NOTE: This is client-side security — it stops casual snooping
+ * and DevTools glancing. A determined developer with time could
+ * still break it. Don't store anything you wouldn't want leaked
+ * if someone had hours with the device.
  *
  * Public API
- *   AdminEngine.init(triggerEl)   — attach the 5-tap listener to triggerEl
- *   AdminEngine.isUnlocked()      — bool, true after correct password
+ *   AdminEngine.init(...triggerEls)
+ *   AdminEngine.isUnlocked()          → bool
+ *   AdminEngine.getRandomAdminMsg()   → {t,c} | null
+ *   AdminEngine.getRandomAdminClip()  → {data,...} | null
+ *   AdminEngine.getRandomMoment()     → {t} | null
  */
 
 const AdminEngine = (() => {
-  const PASS_KEY     = 'lb_admin_pass';
-  const MSGS_KEY     = 'lb_admin_msgs';
-  const CLIPS_KEY    = 'lb_admin_clips';
-  const MOMENTS_KEY  = 'lb_admin_moments';
-  const DEFAULT_PASS = 'loveyou';   // change this first thing in the panel
+  /* ── Obfuscated storage keys (don't look like "admin" anything) ── */
+  const _K = {
+    pass:    '_lbp',   // hashed password
+    msgs:    '_lbm',   // admin messages
+    clips:   '_lbc',   // admin voice clips
+    moments: '_lbt',   // thinking-of-you moments
+    fails:   '_lbf',   // failed attempt count
+    lockout: '_lbl',   // lockout expiry timestamp
+    salt:    '_lbs',   // random salt for hashing
+  };
 
-  let _unlocked = false;
-  let _tapCount = 0;
-  let _tapTimer = null;
+  const DEFAULT_PASS    = 'loveyou';
+  const MAX_ATTEMPTS    = 3;
+  const LOCKOUT_MS      = 60 * 1000;       // 60 seconds
+  const SESSION_MS      = 30 * 60 * 1000;  // 30 minutes idle
+
+  let _unlocked     = false;
+  let _sessionTimer = null;
+  let _tapCount     = 0;
+  let _tapTimer     = null;
 
   /* ══════════════════════════════════════════════
-     STORAGE HELPERS
+     CRYPTO HELPERS
   ══════════════════════════════════════════════ */
-  function _get(k, fb) { try { const r=localStorage.getItem(k); return r!=null?JSON.parse(r):fb; } catch { return fb; } }
-  function _set(k, v)  { try { localStorage.setItem(k,JSON.stringify(v)); } catch { alert('Storage full — remove some clips.'); } }
 
-  function getPassword()  { return localStorage.getItem(PASS_KEY) || DEFAULT_PASS; }
-  function getMsgs()      { return _get(MSGS_KEY, []); }
-  function getClips()     { return _get(CLIPS_KEY, []); }
-  function getMoments()   { return _get(MOMENTS_KEY, []); }
+  /** Generate or retrieve a random salt for this device */
+  function _getSalt() {
+    let s = localStorage.getItem(_K.salt);
+    if (!s) {
+      s = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+               .map(b => b.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem(_K.salt, s);
+    }
+    return s;
+  }
+
+  /** SHA-256 hash of (salt + password), returns hex string */
+  async function _hash(password) {
+    const salt = _getSalt();
+    const data = new TextEncoder().encode(salt + password);
+    const buf  = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(buf))
+                .map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+
+  /** Encode value to base64 for storage */
+  function _enc(obj) {
+    try { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
+    catch { return null; }
+  }
+
+  /** Decode from base64 storage */
+  function _dec(str, fb) {
+    try { return JSON.parse(decodeURIComponent(escape(atob(str)))); }
+    catch { return fb; }
+  }
+
+  function _get(k, fb) {
+    const raw = localStorage.getItem(k);
+    if (!raw) return fb;
+    return _dec(raw, fb);
+  }
+
+  function _set(k, v) {
+    const enc = _enc(v);
+    if (enc) localStorage.setItem(k, enc);
+  }
 
   /* ══════════════════════════════════════════════
-     PUBLIC ACCESSORS (used by other modules)
+     PASSWORD MANAGEMENT
   ══════════════════════════════════════════════ */
+
+  async function _initPassword() {
+    // First run: hash and store the default password
+    if (!localStorage.getItem(_K.pass)) {
+      const h = await _hash(DEFAULT_PASS);
+      localStorage.setItem(_K.pass, h);
+    }
+  }
+
+  async function _checkPassword(input) {
+    const stored = localStorage.getItem(_K.pass);
+    if (!stored) return false;
+    const inputHash = await _hash(input);
+    return inputHash === stored;
+  }
+
+  async function _setPassword(newPass) {
+    const h = await _hash(newPass);
+    localStorage.setItem(_K.pass, h);
+  }
+
+  /* ══════════════════════════════════════════════
+     BRUTE-FORCE LOCKOUT
+  ══════════════════════════════════════════════ */
+
+  function _isLockedOut() {
+    const expiry = parseInt(localStorage.getItem(_K.lockout) || '0', 10);
+    return Date.now() < expiry;
+  }
+
+  function _getLockoutRemaining() {
+    const expiry = parseInt(localStorage.getItem(_K.lockout) || '0', 10);
+    return Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+  }
+
+  function _recordFailure() {
+    let fails = parseInt(localStorage.getItem(_K.fails) || '0', 10) + 1;
+    localStorage.setItem(_K.fails, String(fails));
+    if (fails >= MAX_ATTEMPTS) {
+      localStorage.setItem(_K.lockout, String(Date.now() + LOCKOUT_MS));
+      localStorage.setItem(_K.fails, '0');
+      return true; // locked out
+    }
+    return false;
+  }
+
+  function _clearFailures() {
+    localStorage.removeItem(_K.fails);
+    localStorage.removeItem(_K.lockout);
+  }
+
+  /* ══════════════════════════════════════════════
+     SESSION TIMEOUT
+  ══════════════════════════════════════════════ */
+
+  function _startSession() {
+    _clearSession();
+    _sessionTimer = setTimeout(() => {
+      _unlocked = false;
+      _hidePanel();
+    }, SESSION_MS);
+  }
+
+  function _clearSession() {
+    if (_sessionTimer) { clearTimeout(_sessionTimer); _sessionTimer = null; }
+  }
+
+  /* ══════════════════════════════════════════════
+     DATA ACCESSORS
+  ══════════════════════════════════════════════ */
+
+  function getMsgs()    { return _get(_K.msgs, []); }
+  function getClips()   { return _get(_K.clips, []); }
+  function getMoments() { return _get(_K.moments, []); }
   function isUnlocked() { return _unlocked; }
 
-  /** Returns a random admin message if any exist, else null */
-  function getRandomAdminMsg() {
-    const msgs = getMsgs();
-    if (!msgs.length) return null;
-    return msgs[Math.floor(Math.random() * msgs.length)];
-  }
+  function _pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-  /** Returns a random admin voice clip if any exist, else null */
-  function getRandomAdminClip() {
-    const clips = getClips();
-    if (!clips.length) return null;
-    return clips[Math.floor(Math.random() * clips.length)];
-  }
-
-  /** Returns a random "thinking of you" moment if any exist, else null */
-  function getRandomMoment() {
-    const moments = getMoments();
-    if (!moments.length) return null;
-    return moments[Math.floor(Math.random() * moments.length)];
-  }
+  function getRandomAdminMsg()  { const a = getMsgs();    return a.length ? _pick(a) : null; }
+  function getRandomAdminClip() { const a = getClips();   return a.length ? _pick(a) : null; }
+  function getRandomMoment()    { const a = getMoments(); return a.length ? _pick(a) : null; }
 
   /* ══════════════════════════════════════════════
-     PANEL HTML  (injected into body on demand)
+     PANEL HTML
   ══════════════════════════════════════════════ */
   function _buildPanel() {
-    if (document.getElementById('admin-overlay')) return; // already built
+    if (document.getElementById('admin-overlay')) return;
 
     const html = `
     <div id="admin-overlay" class="overlay hidden">
@@ -81,7 +195,6 @@ const AdminEngine = (() => {
           <button class="card-x" id="admin-close">✕</button>
         </div>
 
-        <!-- TABS -->
         <div class="admin-tabs">
           <button class="atab active" data-tab="msgs">💌 Messages</button>
           <button class="atab" data-tab="voice">🎙 Voice</button>
@@ -89,15 +202,15 @@ const AdminEngine = (() => {
           <button class="atab" data-tab="pass">🔑 Password</button>
         </div>
 
-        <!-- TAB: MESSAGES -->
+        <!-- Messages -->
         <div class="atab-body" id="atab-msgs">
-          <p class="admin-hint">Write private messages only you compose. They mix into the message pool randomly.</p>
+          <p class="admin-hint">Your private messages — mixed into the surprise pool randomly.</p>
           <div class="admin-input-row">
             <textarea id="admin-msg-input" class="admin-textarea" placeholder="Write something from the heart…" rows="3"></textarea>
           </div>
           <div class="admin-input-row" style="gap:.5rem">
             <select id="admin-msg-cat" class="admin-select">
-              <option value="from you">from you 💌</option>
+              <option value="from you 💌">from you 💌</option>
               <option value="affirmation">affirmation</option>
               <option value="comfort">comfort</option>
               <option value="wonder">wonder</option>
@@ -108,33 +221,33 @@ const AdminEngine = (() => {
           <div class="admin-list" id="admin-msg-list"></div>
         </div>
 
-        <!-- TAB: VOICE CLIPS -->
+        <!-- Voice -->
         <div class="atab-body hidden" id="atab-voice">
-          <p class="admin-hint">Upload your private voice clips. These play as special "I saved something for you" moments.</p>
+          <p class="admin-hint">Your private voice recordings — play as "I saved something for you" surprises.</p>
           <div class="vm-drop" id="admin-drop">
             <input type="file" id="admin-clip-file" accept="audio/*" multiple>
             <div class="vm-drop-icon">🎤</div>
-            <div class="vm-drop-txt">Drop your voice recordings here</div>
+            <div class="vm-drop-txt">Drop your recordings here or tap to browse</div>
             <div class="vm-drop-sub">.mp3 · .wav · .ogg · .m4a (max 5 MB)</div>
           </div>
           <div class="admin-list" id="admin-clip-list"></div>
         </div>
 
-        <!-- TAB: THINKING OF YOU MOMENTS -->
+        <!-- Moments -->
         <div class="atab-body hidden" id="atab-moments">
-          <p class="admin-hint">Special "thinking of you" surprises — sent automatically at random intervals. Make them feel like you're always near.</p>
+          <p class="admin-hint">Surprise "thinking of you" lines — sent automatically in the background.</p>
           <div class="admin-input-row">
-            <textarea id="admin-moment-input" class="admin-textarea" placeholder="e.g. "I was just thinking about you 🌙"" rows="2"></textarea>
+            <textarea id="admin-moment-input" class="admin-textarea" placeholder='e.g. "I was just thinking about you 🌙"' rows="2"></textarea>
             <button class="mbtn" id="admin-moment-add" style="flex-shrink:0;align-self:flex-end">Add ✦</button>
           </div>
           <div class="admin-list" id="admin-moment-list"></div>
         </div>
 
-        <!-- TAB: PASSWORD -->
+        <!-- Password -->
         <div class="atab-body hidden" id="atab-pass">
-          <p class="admin-hint">Change the creator panel password. Keep it something only you know.</p>
+          <p class="admin-hint">Change your creator password. Stored as a secure hash — not as plain text.</p>
           <div class="admin-input-row" style="flex-direction:column;gap:.7rem">
-            <input type="password" id="admin-pass-new" class="admin-input" placeholder="New password…" autocomplete="new-password">
+            <input type="password" id="admin-pass-new"     class="admin-input" placeholder="New password…"     autocomplete="new-password">
             <input type="password" id="admin-pass-confirm" class="admin-input" placeholder="Confirm password…" autocomplete="new-password">
             <button class="mbtn" id="admin-pass-save">Save password ✦</button>
           </div>
@@ -149,13 +262,9 @@ const AdminEngine = (() => {
     _wirePanel();
   }
 
-  /* ══════════════════════════════════════════════
-     PANEL LOGIC
-  ══════════════════════════════════════════════ */
   function _wirePanel() {
     const ov = document.getElementById('admin-overlay');
 
-    // Close buttons
     document.getElementById('admin-close').addEventListener('click', _hidePanel);
     document.getElementById('admin-done').addEventListener('click',  _hidePanel);
     ov.addEventListener('click', e => { if (e.target === ov) _hidePanel(); });
@@ -170,55 +279,52 @@ const AdminEngine = (() => {
       });
     });
 
-    // ── Messages tab ──────────────────────────────
+    // Messages
     document.getElementById('admin-msg-add').addEventListener('click', () => {
       const txt = document.getElementById('admin-msg-input').value.trim();
       const cat = document.getElementById('admin-msg-cat').value;
       if (!txt) return;
       const msgs = getMsgs();
-      msgs.push({ id: Date.now(), t: txt, c: cat, admin: true });
-      _set(MSGS_KEY, msgs);
+      msgs.push({ id: Date.now(), t: txt, c: cat });
+      _set(_K.msgs, msgs);
       document.getElementById('admin-msg-input').value = '';
       _renderMsgList();
     });
     _renderMsgList();
 
-    // ── Voice tab ─────────────────────────────────
+    // Voice
     const dropEl = document.getElementById('admin-drop');
     const fileEl = document.getElementById('admin-clip-file');
-
     dropEl.addEventListener('dragover',  e => { e.preventDefault(); dropEl.classList.add('over'); });
     dropEl.addEventListener('dragleave', ()  => dropEl.classList.remove('over'));
-    dropEl.addEventListener('drop', e => {
-      e.preventDefault(); dropEl.classList.remove('over');
-      _addClipFiles(e.dataTransfer.files);
-    });
+    dropEl.addEventListener('drop', e => { e.preventDefault(); dropEl.classList.remove('over'); _addClipFiles(e.dataTransfer.files); });
     fileEl.addEventListener('change', e => { _addClipFiles(e.target.files); e.target.value = ''; });
     _renderClipList();
 
-    // ── Moments tab ───────────────────────────────
+    // Moments
     document.getElementById('admin-moment-add').addEventListener('click', () => {
       const txt = document.getElementById('admin-moment-input').value.trim();
       if (!txt) return;
       const moments = getMoments();
       moments.push({ id: Date.now(), t: txt });
-      _set(MOMENTS_KEY, moments);
+      _set(_K.moments, moments);
       document.getElementById('admin-moment-input').value = '';
       _renderMomentList();
     });
     _renderMomentList();
 
-    // ── Password tab ──────────────────────────────
-    document.getElementById('admin-pass-save').addEventListener('click', () => {
-      const a = document.getElementById('admin-pass-new').value;
-      const b = document.getElementById('admin-pass-confirm').value;
+    // Password
+    document.getElementById('admin-pass-save').addEventListener('click', async () => {
+      const a   = document.getElementById('admin-pass-new').value;
+      const b   = document.getElementById('admin-pass-confirm').value;
       const msg = document.getElementById('admin-pass-msg');
-      if (!a) { _showPassMsg(msg, 'Password cannot be empty.', false); return; }
-      if (a !== b) { _showPassMsg(msg, 'Passwords do not match.', false); return; }
-      localStorage.setItem(PASS_KEY, a);
+      if (!a)    { _showPassMsg(msg, 'Password cannot be empty.', false); return; }
+      if (a !== b){ _showPassMsg(msg, 'Passwords do not match.', false); return; }
+      if (a.length < 4){ _showPassMsg(msg, 'Password must be at least 4 characters.', false); return; }
+      await _setPassword(a);
       document.getElementById('admin-pass-new').value = '';
       document.getElementById('admin-pass-confirm').value = '';
-      _showPassMsg(msg, 'Password updated ✦', true);
+      _showPassMsg(msg, 'Password updated securely ✦', true);
     });
   }
 
@@ -226,10 +332,10 @@ const AdminEngine = (() => {
     el.textContent = txt;
     el.style.color = ok ? 'var(--violet)' : '#ff9090';
     el.classList.remove('hidden');
-    setTimeout(() => el.classList.add('hidden'), 3000);
+    setTimeout(() => el.classList.add('hidden'), 3500);
   }
 
-  /* list renderers */
+  /* ── List renderers ────────────────────────── */
   function _renderMsgList() {
     const el = document.getElementById('admin-msg-list');
     if (!el) return;
@@ -239,17 +345,30 @@ const AdminEngine = (() => {
     msgs.forEach(m => {
       const row = document.createElement('div');
       row.className = 'admin-item';
-      row.innerHTML = `
-        <div class="admin-item-txt">
-          <span class="admin-item-cat">— ${m.c} —</span>
-          <span>${m.t}</span>
-        </div>
-        <button class="vm-del" data-id="${m.id}">✕</button>
-      `;
-      row.querySelector('.vm-del').addEventListener('click', () => {
-        _set(MSGS_KEY, getMsgs().filter(x => x.id !== m.id));
+
+      const txtWrap = document.createElement('div');
+      txtWrap.className = 'admin-item-txt';
+
+      const cat = document.createElement('span');
+      cat.className = 'admin-item-cat';
+      cat.textContent = `— ${m.c} —`;
+
+      const body = document.createElement('span');
+      body.textContent = m.t;
+
+      txtWrap.appendChild(cat);
+      txtWrap.appendChild(body);
+
+      const del = document.createElement('button');
+      del.className = 'vm-del';
+      del.textContent = '✕';
+      del.addEventListener('click', () => {
+        _set(_K.msgs, getMsgs().filter(x => x.id !== m.id));
         _renderMsgList();
       });
+
+      row.appendChild(txtWrap);
+      row.appendChild(del);
       el.appendChild(row);
     });
   }
@@ -257,12 +376,12 @@ const AdminEngine = (() => {
   function _addClipFiles(files) {
     Array.from(files).forEach(file => {
       if (!file.type.startsWith('audio/')) { alert(`"${file.name}" is not an audio file.`); return; }
-      if (file.size > 5*1024*1024) { alert(`"${file.name}" exceeds 5 MB.`); return; }
+      if (file.size > 5 * 1024 * 1024)    { alert(`"${file.name}" exceeds 5 MB.`); return; }
       const reader = new FileReader();
       reader.onload = e => {
         const clips = getClips();
-        clips.push({ id: Date.now()+Math.random(), name: file.name.replace(/\.[^.]+$/,''), data: e.target.result, size: file.size, type: file.type });
-        _set(CLIPS_KEY, clips);
+        clips.push({ id: Date.now() + Math.random(), name: file.name.replace(/\.[^.]+$/, ''), data: e.target.result, size: file.size, type: file.type });
+        _set(_K.clips, clips);
         _renderClipList();
       };
       reader.readAsDataURL(file);
@@ -274,22 +393,37 @@ const AdminEngine = (() => {
     if (!el) return;
     const clips = getClips();
     el.innerHTML = '';
-    if (!clips.length) { el.innerHTML = '<p class="admin-empty">No private clips yet.</p>'; return; }
+    if (!clips.length) { el.innerHTML = '<p class="admin-empty">No clips yet.</p>'; return; }
     clips.forEach(clip => {
       const row = document.createElement('div');
       row.className = 'admin-item';
-      row.innerHTML = `
-        <div class="admin-item-txt"><span>🎤 ${clip.name}</span></div>
-        <button class="vm-play" data-id="${clip.id}" title="Preview">▶</button>
-        <button class="vm-del" data-id="${clip.id}">✕</button>
-      `;
-      row.querySelector('.vm-play').addEventListener('click', () => {
+
+      const txtWrap = document.createElement('div');
+      txtWrap.className = 'admin-item-txt';
+
+      const label = document.createElement('span');
+      label.textContent = `🎤 ${clip.name}`;
+      txtWrap.appendChild(label);
+
+      const playBtn = document.createElement('button');
+      playBtn.className = 'vm-play';
+      playBtn.title = 'Preview';
+      playBtn.textContent = '▶';
+      playBtn.addEventListener('click', () => {
         try { new Audio(clip.data).play(); } catch {}
       });
-      row.querySelector('.vm-del').addEventListener('click', () => {
-        _set(CLIPS_KEY, getClips().filter(x => x.id !== clip.id));
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'vm-del';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', () => {
+        _set(_K.clips, getClips().filter(x => x.id !== clip.id));
         _renderClipList();
       });
+
+      row.appendChild(txtWrap);
+      row.appendChild(playBtn);
+      row.appendChild(delBtn);
       el.appendChild(row);
     });
   }
@@ -303,99 +437,109 @@ const AdminEngine = (() => {
     moments.forEach(m => {
       const row = document.createElement('div');
       row.className = 'admin-item';
-      row.innerHTML = `
-        <div class="admin-item-txt"><span>${m.t}</span></div>
-        <button class="vm-del" data-id="${m.id}">✕</button>
-      `;
-      row.querySelector('.vm-del').addEventListener('click', () => {
-        _set(MOMENTS_KEY, getMoments().filter(x => x.id !== m.id));
+
+      const txtWrap = document.createElement('div');
+      txtWrap.className = 'admin-item-txt';
+
+      const body = document.createElement('span');
+      body.textContent = m.t;
+      txtWrap.appendChild(body);
+
+      const del = document.createElement('button');
+      del.className = 'vm-del';
+      del.textContent = '✕';
+      del.addEventListener('click', () => {
+        _set(_K.moments, getMoments().filter(x => x.id !== m.id));
         _renderMomentList();
       });
+
+      row.appendChild(txtWrap);
+      row.appendChild(del);
       el.appendChild(row);
     });
   }
 
   /* ══════════════════════════════════════════════
-     SHOW / HIDE
+     SHOW / HIDE PANEL
   ══════════════════════════════════════════════ */
   function _showPanel() {
     _buildPanel();
-    // Re-render lists in case data changed
     _renderMsgList();
     _renderClipList();
     _renderMomentList();
     document.getElementById('admin-overlay').classList.remove('hidden');
+    _startSession(); // auto-lock after 30 min idle
   }
 
   function _hidePanel() {
     const ov = document.getElementById('admin-overlay');
     if (ov) ov.classList.add('hidden');
-    _unlocked = false; // require re-auth each visit
+    _unlocked = false;
+    _clearSession();
   }
 
   /* ══════════════════════════════════════════════
-     INIT — attach 5-tap trigger to one or more elements
-     Call: AdminEngine.init(el1, el2, ...)
+     PASSWORD PROMPT  (styled, not window.prompt)
   ══════════════════════════════════════════════ */
-  function init(...triggerEls) {
-    triggerEls.forEach(triggerEl => {
-      if (!triggerEl) return;
-
-      triggerEl.addEventListener('click', () => {
-        _tapCount++;
-        clearTimeout(_tapTimer);
-        // reset tap count if too slow (2 seconds between taps)
-        _tapTimer = setTimeout(() => { _tapCount = 0; }, 2000);
-
-        if (_tapCount >= 5) {
-          _tapCount = 0;
-          clearTimeout(_tapTimer);
-          _promptPassword();
-        }
-      });
-    });
-  }
-
-  function _promptPassword() {
-    // Use a styled inline prompt instead of window.prompt (which is blocked on some browsers)
-    _buildPrompt();
-  }
-
   function _buildPrompt() {
-    // Remove any existing prompt
     const existing = document.getElementById('admin-prompt-overlay');
     if (existing) existing.remove();
+
+    const lockedOut  = _isLockedOut();
+    const remaining  = _getLockoutRemaining();
+    const fails      = parseInt(localStorage.getItem(_K.fails) || '0', 10);
+    const attemptsLeft = MAX_ATTEMPTS - fails;
 
     const html = `
     <div id="admin-prompt-overlay" style="
       position:fixed;inset:0;z-index:9999;
       display:flex;align-items:center;justify-content:center;
-      background:rgba(5,2,14,.88);backdrop-filter:blur(10px);
+      background:rgba(5,2,14,.9);backdrop-filter:blur(12px);
     ">
       <div style="
-        background:rgba(28,8,58,.97);border:1px solid rgba(192,132,252,.3);
+        background:rgba(20,6,45,.98);border:1px solid rgba(192,132,252,.3);
         border-radius:24px;padding:2rem 1.8rem;width:90%;max-width:320px;
-        text-align:center;box-shadow:0 0 50px rgba(192,132,252,.15);
+        text-align:center;box-shadow:0 0 60px rgba(192,132,252,.12);
       ">
-        <div style="font-size:1.8rem;margin-bottom:.8rem">🔐</div>
-        <p style="font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:1.1rem;color:#f5e6ff;margin-bottom:1.4rem">Creator access</p>
-        <input type="password" id="admin-prompt-input" placeholder="Enter your password…"
-          style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(192,132,252,.3);
-          border-radius:12px;padding:.75rem 1rem;color:#f5e6ff;font-size:.9rem;
-          font-family:'DM Sans',sans-serif;outline:none;margin-bottom:1rem;box-sizing:border-box;"
-          autocomplete="current-password">
-        <p id="admin-prompt-err" style="color:#ff9090;font-size:.78rem;margin-bottom:.8rem;display:none">Incorrect password.</p>
+        <div style="font-size:1.8rem;margin-bottom:.7rem">🔐</div>
+        <p style="font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;
+           font-size:1.1rem;color:#f5e6ff;margin-bottom:1.2rem">Creator access</p>
+
+        ${lockedOut ? `
+          <p style="color:#ff9090;font-size:.85rem;line-height:1.6;margin-bottom:1.2rem">
+            Too many attempts.<br>Try again in <span id="lockout-countdown">${remaining}</span>s.
+          </p>
+        ` : `
+          <input type="password" id="admin-prompt-input"
+            placeholder="Enter your password…"
+            style="width:100%;background:rgba(255,255,255,.06);
+            border:1px solid rgba(192,132,252,.3);border-radius:12px;
+            padding:.75rem 1rem;color:#f5e6ff;font-size:.9rem;
+            font-family:'DM Sans',sans-serif;outline:none;
+            margin-bottom:.8rem;box-sizing:border-box;"
+            autocomplete="current-password">
+          <p id="admin-prompt-err" style="color:#ff9090;font-size:.75rem;
+             margin-bottom:.8rem;min-height:1rem;line-height:1.5"></p>
+          ${attemptsLeft < MAX_ATTEMPTS ? `
+            <p style="color:rgba(255,144,144,.6);font-size:.7rem;margin-bottom:.6rem">
+              ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining
+            </p>` : ''}
+        `}
+
         <div style="display:flex;gap:.7rem;justify-content:center">
           <button id="admin-prompt-cancel" style="
-            padding:.55rem 1.2rem;border-radius:100px;border:1px solid rgba(192,132,252,.2);
-            background:transparent;color:#a78bca;font-size:.8rem;cursor:pointer;font-family:'DM Sans',sans-serif;
-          ">Cancel</button>
+            padding:.55rem 1.2rem;border-radius:100px;
+            border:1px solid rgba(192,132,252,.2);background:transparent;
+            color:#a78bca;font-size:.8rem;cursor:pointer;
+            font-family:'DM Sans',sans-serif;">Cancel</button>
+          ${!lockedOut ? `
           <button id="admin-prompt-ok" style="
             padding:.55rem 1.4rem;border-radius:100px;
             border:1px solid rgba(192,132,252,.5);
             background:rgba(192,132,252,.14);color:#f5e6ff;
-            font-size:.8rem;cursor:pointer;font-family:'DM Sans',sans-serif;
-          ">Enter ✦</button>
+            font-size:.8rem;cursor:pointer;
+            font-family:'DM Sans',sans-serif;">Enter ✦</button>
+          ` : ''}
         </div>
       </div>
     </div>`;
@@ -403,33 +547,74 @@ const AdminEngine = (() => {
     document.body.insertAdjacentHTML('beforeend', html);
 
     const overlay = document.getElementById('admin-prompt-overlay');
-    const input   = document.getElementById('admin-prompt-input');
-    const err     = document.getElementById('admin-prompt-err');
+    document.getElementById('admin-prompt-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 
-    // Focus input
-    setTimeout(() => input.focus(), 100);
+    // Lockout countdown ticker
+    if (lockedOut) {
+      const tick = setInterval(() => {
+        const rem = _getLockoutRemaining();
+        const el  = document.getElementById('lockout-countdown');
+        if (el) el.textContent = rem;
+        if (rem <= 0) { clearInterval(tick); overlay.remove(); _buildPrompt(); }
+      }, 1000);
+      return;
+    }
 
-    function tryLogin() {
-      if (input.value === getPassword()) {
+    const input = document.getElementById('admin-prompt-input');
+    const err   = document.getElementById('admin-prompt-err');
+    setTimeout(() => input && input.focus(), 100);
+
+    async function tryLogin() {
+      if (!input.value) return;
+      const ok = await _checkPassword(input.value);
+      if (ok) {
+        _clearFailures();
         overlay.remove();
         _unlocked = true;
         _showPanel();
       } else {
-        err.style.display = 'block';
+        const lockedNow = _recordFailure();
         input.value = '';
-        input.focus();
-        setTimeout(() => { err.style.display = 'none'; }, 2500);
+        if (lockedNow) {
+          overlay.remove();
+          _buildPrompt(); // rebuild showing lockout screen
+        } else {
+          const left = MAX_ATTEMPTS - parseInt(localStorage.getItem(_K.fails) || '0', 10);
+          err.textContent = `Incorrect password. ${left} attempt${left !== 1 ? 's' : ''} remaining.`;
+          input.focus();
+        }
       }
     }
 
     document.getElementById('admin-prompt-ok').addEventListener('click', tryLogin);
-    document.getElementById('admin-prompt-cancel').addEventListener('click', () => overlay.remove());
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') tryLogin();
+      if (e.key === 'Enter')  tryLogin();
       if (e.key === 'Escape') overlay.remove();
     });
-    // Close on backdrop click
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  /* ══════════════════════════════════════════════
+     INIT — register 5-tap trigger on elements
+  ══════════════════════════════════════════════ */
+  function init(...triggerEls) {
+    // Hash default password on first run
+    _initPassword();
+
+    triggerEls.forEach(triggerEl => {
+      if (!triggerEl) return;
+      triggerEl.addEventListener('click', () => {
+        _tapCount++;
+        clearTimeout(_tapTimer);
+        _tapTimer = setTimeout(() => { _tapCount = 0; }, 2000);
+
+        if (_tapCount >= 5) {
+          _tapCount = 0;
+          clearTimeout(_tapTimer);
+          _buildPrompt();
+        }
+      });
+    });
   }
 
   return {
