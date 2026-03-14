@@ -100,18 +100,40 @@ I want to be honest: It does not protect against someone who is technically skil
 For a personal gift app between two people who trust each other, this is more than enough :) .
 
 
-## Hosting on GitHub Pages
+## Setup
 
-The app is a pure static site — HTML, CSS, and JS. No server, no database, no account. Everything lives in the browser's localStorage on his device.
+### Local development
+```bash
+cd server
+cp .env.example .env
+# Edit .env: set JWT_SECRET and ADMIN_PASSWORD
+npm install
+npm run dev
+# Open http://localhost:3000
+```
 
-To host it:
+### Deploy to Railway (free)
+1. Push this repo to GitHub
+2. Go to railway.app → New Project → Deploy from GitHub
+3. Select your repo → set root to `server/`
+4. Add environment variables from .env.example
+5. Railway gives you a URL like https://lovebot-xxx.railway.app
 
-1. Push the entire `lovebot/` folder to a GitHub repository
-2. Go to **Settings → Pages → Source** and set it to your main branch, root folder
-3. GitHub gives you a URL like `https://yourusername.github.io/lovebot2/`
-4. Send her/him that link and tell her/him to add it to her/him home screen.
+### Deploy to Render (free)
+1. Go to render.com → New Web Service
+2. Connect your GitHub repo
+3. Root directory: `server`
+4. Build command: `npm install`
+5. Start command: `npm start`
+6. Add environment variables
 
-**Important:** The `manifest.json` file must be at the root of the repo (next to `index.html`), not inside the `pwa/` folder. The service worker registers from `./pwa/service-worker.js` relative to the root. Both of these are already set up correctly.
+## Security
+- Password stored as bcrypt (12 rounds) — server side only
+- JWT tokens expire in 2 hours
+- Login rate-limited to 5 attempts per 15 minutes
+- Voice clips never sent to browser as base64 — streamed on demand
+- Admin routes all require valid JWT
+- .env and data.json are gitignored — never committed
 
 To install as an app on her phone (Android):
 - Open the link in Chrome
@@ -126,32 +148,25 @@ On iPhone:
 
 ## File structure
 
-```
-lovebot/
-├── index.html               — the whole UI lives here
-├── style.css                — dark cosmic theme + light mode
-├── app.js                   — wires everything together
-├── manifest.json            — PWA install config (must be at root)
-├── data/
-│   └── messages.js          — all the message content
-├── modules/
-│   ├── moodEngine.js        — tracks mood state
-│   ├── emotionEngine.js     — TTS voice + emoji burst + screen glow
-│   ├── adminEngine.js       — your hidden creator panel
-│   ├── unlockEngine.js      — milestone tracking + visual unlocks
-│   ├── constellationEngine.js — floating nodes + canvas lines
-│   ├── surpriseEngine.js    — 2–8hr random surprise timer
-│   ├── dailyEngine.js       — daily greeting + 20min interval
-│   ├── memoryAI.js          — gratitude prompts + memory callbacks
-│   ├── notificationEngine.js — push notifications
-│   ├── voiceEngine.js       — basic TTS wrapper
-│   └── voiceManager.js      — audio file handling
-└── pwa/
-    ├── manifest.json        — copy (source of truth is root)
-    └── service-worker.js    — offline caching + push handler
-```
+Full Stack Version
 
----
+lovebot-full/
+├── server/              ← Node.js/Express backend
+│   ├── index.js         ← All routes, password logic, message data
+│   ├── package.json
+│   ├── .env.example     ← Copy to .env and fill in
+│   ├── .gitignore       ← .env, data.json, uploads/ never committed
+│   └── uploads/         ← Voice clips stored here (auto-created)
+│
+└── client/
+    └── public/          ← Everything the browser downloads
+        ├── index.html
+        ├── client.js    ← Only frontend UI logic, no secrets
+        ├── style.css
+        ├── manifest.json
+        ├── assets/icons/
+        └── pwa/service-worker.js
+```
 
 ## If something breaks
 
